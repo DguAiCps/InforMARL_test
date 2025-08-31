@@ -1,7 +1,7 @@
 # Core dependencies
 gymnasium
 matplotlib==3.10.3
-numpy==2.3.1
+numpy
 pyyaml
 
 # PyTorch with CUDA support (choose one based on your CUDA version)
