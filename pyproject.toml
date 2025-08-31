@@ -14,7 +14,7 @@ requires-python = ">=3.8"
 dependencies = [
     "gymnasium",
     "matplotlib==3.10.3", 
-    "numpy==2.3.1",
+    "numpy",
     "torch",
     "torch-geometric",
     "pyyaml",
