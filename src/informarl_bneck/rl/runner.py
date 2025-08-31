@@ -5,7 +5,7 @@ import numpy as np
 import time
 from typing import List, Dict, Any
 
-from informarl_bneck.env import BottleneckInforMARLEnv
+from informarl_bneck.env.bottleneck_env import BottleneckInforMARLEnv
 from informarl_bneck.env.graph_builder import build_graph_observations
 from informarl_bneck.utils.device import clear_gpu_memory, get_memory_usage
 
