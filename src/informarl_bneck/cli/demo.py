@@ -2,7 +2,7 @@
 Demo CLI entry point for animation
 """
 import sys
-from ..rl.runner import run_animation_demo
+from informarl_bneck.rl.runner import run_animation_demo
 
 
 def main():

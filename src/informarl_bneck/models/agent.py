@@ -8,7 +8,7 @@ import random
 from typing import Dict
 
 from .policy import Actor, Critic
-from ..utils.device import get_device
+from informarl_bneck.utils.device import get_device
 
 
 class InforMARLAgent:

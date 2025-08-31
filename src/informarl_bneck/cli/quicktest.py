@@ -2,7 +2,7 @@
 Quick test CLI entry point
 """
 import sys
-from ..rl.runner import quick_movement_test
+from informarl_bneck.rl.runner import quick_movement_test
 
 
 def main():

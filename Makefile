@@ -23,19 +23,19 @@ install-dev:
 
 # Training and evaluation
 train:
-	python -m src.informarl_bneck.cli.train
+	python main.py
 
 train-long:
 	python -m src.informarl_bneck.cli.train 200 6
 
 demo:
-	python -m src.informarl_bneck.cli.demo
+	python main.py demo
 
 demo-big:
-	python -m src.informarl_bneck.cli.demo 6
+	python main.py demo
 
 test:
-	python -m src.informarl_bneck.cli.quicktest
+	python main.py test
 
 quicktest: test
 
