@@ -94,11 +94,13 @@ celerybeat.pid
 # Environments
 .env
 .venv
-env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# BUT keep our source code env folder
+!src/informarl_bneck/env/
 
 # Spyder project settings
 .spyderproject
