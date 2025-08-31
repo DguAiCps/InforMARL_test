@@ -1,0 +1,30 @@
+# Training configuration
+training:
+  num_episodes: 100
+  learning_rate: 0.001  # 기존 0.03에서 낮춤
+  batch_size: 32
+  update_frequency: 10  # 매 10스텝마다 업데이트
+  
+  # PPO parameters
+  ppo_epochs: 4
+  clip_epsilon: 0.2
+  
+  # GAE parameters
+  gamma: 0.99
+  lambda: 0.95
+  
+  # Loss weights
+  value_loss_coef: 0.5
+  entropy_coef: 0.01
+  
+  # Gradient clipping
+  max_grad_norm: 0.5
+  
+  # Memory
+  memory_size: 10000
+  
+  # Evaluation
+  eval_frequency: 10  # 매 10 에피소드마다 로그
+  
+  # Seed for reproducibility
+  seed: 42

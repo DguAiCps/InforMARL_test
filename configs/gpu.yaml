@@ -1,0 +1,21 @@
+# GPU configuration for server training
+gpu:
+  # GPU selection
+  gpu_id: null              # null for auto-select, or specify GPU ID (0, 1, 2, etc.)
+  force_cpu: false          # Set true to force CPU usage
+  
+  # Memory optimization
+  clear_cache_frequency: 10 # Clear GPU cache every N episodes
+  
+  # Training optimization for servers
+  mixed_precision: true     # Use mixed precision training (faster)
+  pin_memory: true          # Pin memory for faster data transfer
+  num_workers: 4            # DataLoader workers (for future use)
+  
+  # Batch processing
+  batch_accumulation: 1     # Gradient accumulation steps
+  prefetch_factor: 2        # Data prefetching
+  
+  # Multi-GPU (for future expansion)
+  multi_gpu: false          # Enable multi-GPU training
+  gpu_ids: [0, 1]          # List of GPU IDs for multi-GPU
