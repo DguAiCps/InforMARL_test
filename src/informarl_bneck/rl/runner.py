@@ -22,10 +22,10 @@ def train_agents(env: BottleneckInforMARLEnv, num_episodes: int = 100) -> List[f
             observations, rewards, done, info = env.step()
             episode_reward += sum(rewards)
             
-            # 매 N스텝마다 네트워크 업데이트 (성능 최적화: 10 → 50)
-            if step % 50 == 0:
-                for agent in env.informarl_agents:
-                    agent.update_networks(env.shared_gnn)
+            # 매 N스텝마다 네트워크 업데이트 (성능 최적화: 50 → 100)
+            if step % 100 == 0:
+                # 🚀 공유 네트워크 배치 업데이트 (개별 업데이트 대신)
+                env._update_shared_networks()
                 # 공유 GNN 옵티마이저 스텝
                 env.gnn_optimizer.step()
                 env.gnn_optimizer.zero_grad()
@@ -36,8 +36,7 @@ def train_agents(env: BottleneckInforMARLEnv, num_episodes: int = 100) -> List[f
         episode_rewards.append(episode_reward)
         
         # 에피소드 끝에 한 번 더 업데이트
-        for agent in env.informarl_agents:
-            agent.update_networks(env.shared_gnn)
+        env._update_shared_networks()
         # 공유 GNN 옵티마이저 스텝
         env.gnn_optimizer.step()
         env.gnn_optimizer.zero_grad()

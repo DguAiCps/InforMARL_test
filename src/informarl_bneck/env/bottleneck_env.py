@@ -14,7 +14,7 @@ from ..utils.device import get_device, setup_gpu_environment
 from .map import create_agents_and_landmarks, create_obstacles
 from .physics import execute_action, update_positions, batch_execute_actions_gpu, batch_update_positions_gpu
 from .reward import calculate_rewards
-from .waypoint_reward import calculate_waypoint_rewards
+from .waypoint_reward import calculate_waypoint_rewards, calculate_waypoint_rewards_gpu
 from .graph_builder import build_graph_observations, batch_build_graph_observations_gpu
 from .render import BottleneckRenderer
 from .path_planner import update_agent_waypoints, get_waypoint_direction, get_waypoint_distance
@@ -125,6 +125,16 @@ class BottleneckInforMARLEnv(gym.Env):
             self.shared_gnn = GraphNeuralNetwork().to(self.device)
             self.gnn_optimizer = torch.optim.Adam(self.shared_gnn.parameters(), lr=0.003)
         
+        # 🚀 공유 Actor/Critic 초기화 (진짜 배치 처리용)
+        from ..models.policy import Actor, Critic
+        if not hasattr(self, 'shared_actor'):
+            self.shared_actor = Actor(obs_dim=9, action_dim=4).to(self.device)  # waypoint 포함 obs_dim
+            self.shared_critic = Critic().to(self.device)
+            self.shared_policy_optimizer = torch.optim.Adam(
+                list(self.shared_actor.parameters()) + list(self.shared_critic.parameters()), 
+                lr=0.003
+            )
+        
         # 에이전트 waypoint 초기화
         update_agent_waypoints(
             self.agents, self.landmarks, self.corridor_width, self.corridor_height,
@@ -173,11 +183,12 @@ class BottleneckInforMARLEnv(gym.Env):
                 self.include_obstacles_in_gnn
             )
         
-        # waypoint 업데이트 (매 스텝)
-        update_agent_waypoints(
-            self.agents, self.landmarks, self.corridor_width, self.corridor_height,
-            self.bottleneck_position, self.bottleneck_width
-        )
+        # waypoint 업데이트 (5스텝마다로 줄임 - 성능 최적화)
+        if self.timestep % 5 == 0:
+            update_agent_waypoints(
+                self.agents, self.landmarks, self.corridor_width, self.corridor_height,
+                self.bottleneck_position, self.bottleneck_width
+            )
         
         # 행동 선택 (배치 처리)
         if actions is None:
@@ -209,8 +220,12 @@ class BottleneckInforMARLEnv(gym.Env):
             )
         self.collision_count += collision_count
         
-        # 보상 계산 (waypoint 기반)
-        rewards = calculate_waypoint_rewards(self.agents, self.landmarks)
+        # 보상 계산 (GPU 병렬 처리로 성능 최적화)
+        try:
+            rewards = calculate_waypoint_rewards_gpu(self.agents, self.landmarks, self.device)
+        except Exception as e:
+            print(f"GPU reward calculation failed, using CPU: {e}")
+            rewards = calculate_waypoint_rewards(self.agents, self.landmarks)
         
         # 성공 카운트 업데이트
         for agent in self.agents:
@@ -232,28 +247,12 @@ class BottleneckInforMARLEnv(gym.Env):
                 }
                 self.informarl_agents[i].store_experience(experience)
         
-        # step 끝에서 새로운 관측 생성 (설정에 따라 GPU/CPU 선택)
-        if self.use_gpu_graph:
-            try:
-                new_obs = batch_build_graph_observations_gpu(
-                    self.agents, self.landmarks, self.obstacles, self.sensing_radius, 
-                    self.device, self.include_obstacles_in_gnn
-                )
-            except Exception as e:
-                print(f"GPU graph building failed in step end, using CPU: {e}")
-                new_obs = build_graph_observations(
-                    self.agents, self.landmarks, self.obstacles, self.sensing_radius,
-                    self.include_obstacles_in_gnn
-                )
-        else:
-            new_obs = build_graph_observations(
-                self.agents, self.landmarks, self.obstacles, self.sensing_radius,
-                self.include_obstacles_in_gnn
-            )
+        # 🚀 성능 최적화: step 끝 그래프 생성 제거 (다음 스텝에서 어차피 새로 생성)
         done = self._is_done()
         info = self._get_info()
         
-        return new_obs, rewards, done, info
+        # 빈 리스트 반환 (실제로는 사용되지 않음)
+        return [], rewards, done, info
     
     def _get_batch_actions(self, graph_observations: List[Data], training: bool = True):
         """개별 그래프 처리 - 센싱 범위 제한 유지하면서 GPU 사용"""
@@ -310,38 +309,146 @@ class BottleneckInforMARLEnv(gym.Env):
         agent_embeddings_batch = torch.stack(agent_embeddings)
         global_embeddings_batch = torch.stack(global_embeddings)
         
+        # 🚀 진짜 배치 처리 - 모든 에이전트를 한번에 처리
         if training:
-            # Critic으로 값 함수 계산
-            global_values = self.informarl_agents[0].critic(global_embeddings_batch)
+            # 🚀 공유 Critic으로 모든 에이전트의 값 함수를 한번에 계산
+            global_values = self.shared_critic(global_embeddings_batch)  # [N, 1]
             
-            for i, agent in enumerate(self.informarl_agents):
-                # Actor: 로컬 관측 + 집계 정보
-                local_obs = local_obs_batch[i].unsqueeze(0)
-                agg_info = agent_embeddings_batch[i].unsqueeze(0)
-                action_probs = agent.actor(local_obs, agg_info)
-                
-                # 확률적 행동 선택
-                action_dist = torch.distributions.Categorical(action_probs)
-                action = action_dist.sample()
-                log_prob = action_dist.log_prob(action)
-                
-                actions.append(action.item())
-                log_probs.append(log_prob.item())
-                values.append(global_values[i].item())
+            # 🚀 공유 Actor로 모든 에이전트의 행동 확률을 한번에 계산
+            all_action_probs = self.shared_actor(local_obs_batch, agent_embeddings_batch)  # [N, 4]
+            
+            # 🚀 배치로 행동 선택
+            action_dists = torch.distributions.Categorical(all_action_probs)
+            sampled_actions = action_dists.sample()  # [N]
+            log_probs_tensor = action_dists.log_prob(sampled_actions)  # [N]
+            
+            actions = sampled_actions.cpu().tolist()
+            log_probs = log_probs_tensor.cpu().tolist()
+            values = global_values.squeeze().cpu().tolist()
         else:
-            # 평가 시: Actor만 사용
-            for i, agent in enumerate(self.informarl_agents):
-                local_obs = local_obs_batch[i].unsqueeze(0)
-                agg_info = agent_embeddings_batch[i].unsqueeze(0)
-                action_probs = agent.actor(local_obs, agg_info)
-                
-                # 결정적 행동 선택
-                action = torch.argmax(action_probs, dim=1)
-                actions.append(action.item())
-                log_probs.append(0.0)
-                values.append(0.0)
+            # 🚀 평가 시도 배치 처리
+            all_action_probs = self.shared_actor(local_obs_batch, agent_embeddings_batch)  # [N, 4]
+            
+            # 결정적 행동 선택 (가장 높은 확률)
+            sampled_actions = torch.argmax(all_action_probs, dim=1)  # [N]
+            actions = sampled_actions.cpu().tolist()
+            log_probs = [0.0] * len(actions)
+            values = [0.0] * len(actions)
         
         return actions, log_probs, values
+    
+    def _update_shared_networks(self):
+        """🚀 공유 네트워크 배치 업데이트 - 모든 에이전트 경험을 한번에 처리"""
+        # 모든 에이전트의 경험을 모음
+        all_experiences = []
+        for agent in self.informarl_agents:
+            if len(agent.memory) >= 16:  # 최소 경험이 있는 에이전트만
+                experiences = list(agent.memory)
+                all_experiences.extend(experiences[-32:])  # 최근 32개만 사용
+        
+        if len(all_experiences) < 32:  # 전체 경험이 너무 적으면 스킵
+            return
+        
+        # 🚀 배치 샘플링
+        import random
+        batch_size = min(64, len(all_experiences))  # 더 큰 배치 사이즈
+        batch = random.sample(all_experiences, batch_size)
+        
+        # 배치 데이터 준비
+        device = self.device
+        graph_data_list = [exp['graph_data'] for exp in batch]
+        local_obs = torch.stack([exp['local_obs'] for exp in batch]).to(device)
+        actions = torch.tensor([exp['action'] for exp in batch]).to(device)
+        old_log_probs = torch.tensor([exp['log_prob'] for exp in batch], dtype=torch.float32).to(device)
+        rewards = torch.tensor([exp['reward'] for exp in batch], dtype=torch.float32).to(device)
+        values = torch.tensor([exp['value'] for exp in batch], dtype=torch.float32).to(device)
+        
+        # GAE 계산
+        advantages = self._compute_gae(rewards, values).to(device)
+        returns = (advantages + values).to(device)
+        
+        # 🚀 PPO 업데이트 (더 적은 에폭으로 속도 향상)
+        for _ in range(2):  # 4→2로 줄임
+            # 공유 GNN으로 그래프 데이터 처리
+            from torch_geometric.data import Batch
+            batch_graphs = Batch.from_data_list(graph_data_list).to(device)
+            node_embeddings = self.shared_gnn(batch_graphs)
+            
+            # 에이전트 임베딩 추출 (simplified)
+            nodes_per_graph = len(graph_data_list[0].x) if graph_data_list else 1
+            agent_embeddings = []
+            global_embeddings = []
+            
+            for i in range(len(batch)):
+                start_idx = i * nodes_per_graph
+                end_idx = min(start_idx + nodes_per_graph, len(node_embeddings))
+                
+                if start_idx < len(node_embeddings):
+                    agent_emb = node_embeddings[start_idx]
+                    agent_embeddings.append(agent_emb)
+                    
+                    # 글로벌 집계 (단순화)
+                    graph_nodes = node_embeddings[start_idx:end_idx]
+                    global_agg = graph_nodes.mean(dim=0) if len(graph_nodes) > 0 else agent_emb
+                    global_embeddings.append(global_agg)
+                else:
+                    # 폴백
+                    agent_embeddings.append(node_embeddings[0] if len(node_embeddings) > 0 else torch.zeros(64, device=device))
+                    global_embeddings.append(node_embeddings[0] if len(node_embeddings) > 0 else torch.zeros(64, device=device))
+            
+            agent_embeddings = torch.stack(agent_embeddings)
+            global_embeddings = torch.stack(global_embeddings)
+            
+            # 🚀 공유 네트워크로 배치 처리
+            action_probs = self.shared_actor(local_obs, agent_embeddings)
+            current_values = self.shared_critic(global_embeddings).squeeze()
+            
+            # PPO 손실 계산
+            dist = torch.distributions.Categorical(action_probs)
+            new_log_probs = dist.log_prob(actions)
+            entropy = dist.entropy()
+            
+            # PPO ratio
+            ratio = torch.exp(new_log_probs - old_log_probs)
+            
+            # Policy loss (clipped)
+            surr1 = ratio * advantages
+            surr2 = torch.clamp(ratio, 1-0.2, 1+0.2) * advantages
+            policy_loss = -torch.min(surr1, surr2).mean()
+            
+            # Value loss
+            value_loss = torch.nn.functional.mse_loss(current_values, returns)
+            
+            # Entropy bonus
+            entropy_loss = -entropy.mean()
+            
+            # Total loss
+            total_loss = policy_loss + 0.5 * value_loss + 0.01 * entropy_loss
+            
+            # 🚀 공유 네트워크 업데이트
+            self.shared_policy_optimizer.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                list(self.shared_actor.parameters()) + list(self.shared_critic.parameters()), 
+                0.5
+            )
+            self.shared_policy_optimizer.step()
+    
+    def _compute_gae(self, rewards, values, gamma=0.99, lam=0.95):
+        """Generalized Advantage Estimation"""
+        advantages = torch.zeros_like(rewards)
+        gae = 0
+        
+        for t in reversed(range(len(rewards))):
+            if t == len(rewards) - 1:
+                delta = rewards[t] - values[t]
+            else:
+                delta = rewards[t] + gamma * values[t+1] - values[t]
+            
+            gae = delta + gamma * lam * gae
+            advantages[t] = gae
+        
+        return (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     
     def _get_local_observation(self, agent_id: int) -> List[float]:
         """에이전트의 로컬 관측 (waypoint 포함)"""
