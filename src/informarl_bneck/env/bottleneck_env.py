@@ -189,11 +189,7 @@ class BottleneckInforMARLEnv(gym.Env):
         # 🚀 GPU 배치 물리 계산 (기존 CPU 방식보다 훨씬 빠름)
         try:
             # GPU에서 행동 실행 (배치)
-            new_velocities, new_penalties = batch_execute_actions_gpu(self.agents, actions, self.device)
-            
-            # 페널티 타이머 업데이트
-            for i, agent in enumerate(self.agents):
-                agent.collision_penalty_timer = int(new_penalties[i].item())
+            new_velocities = batch_execute_actions_gpu(self.agents, actions, self.device)
             
             # GPU에서 위치 업데이트 (배치)
             collision_count = batch_update_positions_gpu(

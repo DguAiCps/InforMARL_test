@@ -8,15 +8,10 @@ from ..utils.types import Agent2D, Obstacle2D
 
 
 def execute_action(agent: Agent2D, action: int):
-    """행동 실행 - 충돌 페널티 적용"""
+    """행동 실행 - 충돌 페널티 제거"""
     
-    # 충돌 페널티 체크
-    collision_penalty = getattr(agent, 'collision_penalty_timer', 0)
-    if collision_penalty > 0:
-        speed = agent.max_speed * 0.2  # 충돌 후 느린 속도
-        agent.collision_penalty_timer = collision_penalty - 1
-    else:
-        speed = agent.max_speed * 0.5  # 일반 속도
+    # 항상 정상 속도로 움직임
+    speed = agent.max_speed * 0.5
     
     if action == 0:  # 위
         agent.vy = min(agent.vy + speed, agent.max_speed)
@@ -27,38 +22,45 @@ def execute_action(agent: Agent2D, action: int):
     elif action == 3:  # 오른쪽
         agent.vx = min(agent.vx + speed, agent.max_speed)
     
-    # 속도 감쇠 (충돌 페널티 중이면 더 강하게)
-    decay_factor = 0.7 if collision_penalty > 0 else 0.9
-    agent.vx *= decay_factor
-    agent.vy *= decay_factor
+    # 속도 감쇠 제거 - 에이전트가 멈추지 않도록
 
 
 def update_positions(agents: List[Agent2D], obstacles: List[Obstacle2D], 
                     corridor_width: float, corridor_height: float,
                     bottleneck_position: float, bottleneck_width: float) -> int:
-    """위치 업데이트 - 강화된 충돌 처리"""
+    """위치 업데이트 - 하드 경계 제약 적용"""
     dt = 0.1
-    collision_count = 0
     
     for agent in agents:
         new_x = agent.x + agent.vx * dt
         new_y = agent.y + agent.vy * dt
         
-        # 통합된 충돌 체크
-        collision_info = check_collision_detailed(
-            agent, new_x, new_y, agents, obstacles,
-            corridor_width, corridor_height, bottleneck_position, bottleneck_width
-        )
+        # 🚀 하드 경계 제약 적용 - 경계 내에 강제로 유지
+        margin = agent.radius
         
-        if not collision_info['has_collision']:
-            agent.x = new_x
-            agent.y = new_y
-        else:
-            # 충돌 시 강화된 처리
-            handle_collision(agent, collision_info, corridor_width, corridor_height)
-            collision_count += 1
+        # X축 경계 제약
+        new_x = max(margin, min(new_x, corridor_width - margin))
+        
+        # Y축 경계 제약
+        new_y = max(margin, min(new_y, corridor_height - margin))
+        
+        # 병목 벽 제약
+        center_y = corridor_height / 2
+        upper_wall_y = center_y + bottleneck_width / 2
+        lower_wall_y = center_y - bottleneck_width / 2
+        
+        # 병목 영역에서 벽 충돌 방지
+        if bottleneck_position - 2.0 < new_x < bottleneck_position + 2.0:
+            if lower_wall_y + margin < new_y < center_y and new_y > upper_wall_y - margin:
+                new_y = upper_wall_y - margin  # 위쪽 벽으로 밀어냄
+            elif center_y < new_y < upper_wall_y - margin and new_y < lower_wall_y + margin:
+                new_y = lower_wall_y + margin  # 아래쪽 벽으로 밀어냄
+        
+        # 위치 업데이트 (속도는 유지)
+        agent.x = new_x
+        agent.y = new_y
     
-    return collision_count
+    return 0  # 더 이상 충돌 카운트하지 않음
 
 
 def check_collision_detailed(agent: Agent2D, new_x: float, new_y: float,
@@ -213,8 +215,7 @@ def handle_collision(agent: Agent2D, collision_info: Dict[str, Any],
                 agent.x += (dx / dist) * push_distance
                 agent.y += (dy / dist) * push_distance
     
-    # 충돌한 에이전트는 다음 스텝에서 잠시 느리게 움직임
-    agent.collision_penalty_timer = getattr(agent, 'collision_penalty_timer', 0) + 1  # 3 → 1로 감소
+    # 충돌 페널티 시스템 제거
 
 
 # =============================================================================
@@ -228,14 +229,11 @@ def batch_execute_actions_gpu(agents: List[Agent2D], actions: List[int], device:
     # 현재 에이전트 상태를 텐서로 변환
     positions = torch.tensor([[agent.x, agent.y] for agent in agents], dtype=torch.float32).to(device)
     velocities = torch.tensor([[agent.vx, agent.vy] for agent in agents], dtype=torch.float32).to(device)
-    penalties = torch.tensor([getattr(agent, 'collision_penalty_timer', 0) for agent in agents], dtype=torch.float32).to(device)
     max_speeds = torch.tensor([agent.max_speed for agent in agents], dtype=torch.float32).to(device)
     actions_tensor = torch.tensor(actions, dtype=torch.long).to(device)
     
-    # 충돌 페널티에 따른 속도 조정
-    normal_speed = max_speeds * 0.5
-    penalty_speed = max_speeds * 0.2
-    current_speeds = torch.where(penalties > 0, penalty_speed, normal_speed)
+    # 항상 정상 속도로 움직임
+    current_speeds = max_speeds * 0.5
     
     # 행동을 속도 변화로 변환 (배치)
     action_to_velocity_change = torch.tensor([
@@ -252,16 +250,9 @@ def batch_execute_actions_gpu(agents: List[Agent2D], actions: List[int], device:
     max_speed_limit = max_speeds.unsqueeze(1)
     new_velocities = torch.clamp(new_velocities, -max_speed_limit, max_speed_limit)
     
-    # 속도 감쇠 (배치)
-    decay_normal = torch.full_like(penalties, 0.9)
-    decay_penalty = torch.full_like(penalties, 0.7)
-    decay_factors = torch.where(penalties > 0, decay_penalty, decay_normal).unsqueeze(1)
-    new_velocities = new_velocities * decay_factors
+    # 속도 감쇠 제거 - 에이전트가 멈추지 않도록
     
-    # 페널티 타이머 감소
-    new_penalties = torch.clamp(penalties - 1, min=0)
-    
-    return new_velocities, new_penalties
+    return new_velocities
 
 
 def batch_update_positions_gpu(agents: List[Agent2D], new_velocities: torch.Tensor, 
@@ -278,15 +269,37 @@ def batch_update_positions_gpu(agents: List[Agent2D], new_velocities: torch.Tens
     # 새로운 위치 계산
     new_positions = positions + new_velocities * dt
     
-    # 🚀 GPU에서 배치 충돌 검사
-    collision_mask, collision_count = batch_check_collisions_gpu(
-        new_positions, radii, obstacles, corridor_width, corridor_height, 
-        bottleneck_position, bottleneck_width, device
-    )
+    # 🚀 하드 경계 제약 적용 - 에이전트를 경계 내에 강제로 유지
+    margin = radii.unsqueeze(1)  # [num_agents, 1]로 브로드캐스팅용
     
-    # 충돌이 없는 에이전트만 위치 업데이트
-    valid_positions = torch.where(collision_mask.unsqueeze(1), positions, new_positions)
-    valid_velocities = torch.where(collision_mask.unsqueeze(1), torch.zeros_like(new_velocities), new_velocities)
+    # X축 경계 제약
+    new_positions[:, 0] = torch.clamp(new_positions[:, 0], 
+                                     margin.squeeze(), 
+                                     corridor_width - margin.squeeze())
+    
+    # Y축 경계 제약  
+    new_positions[:, 1] = torch.clamp(new_positions[:, 1], 
+                                     margin.squeeze(), 
+                                     corridor_height - margin.squeeze())
+    
+    # 병목 벽 제약도 적용
+    center_y = corridor_height / 2
+    upper_wall_y = center_y + bottleneck_width / 2
+    lower_wall_y = center_y - bottleneck_width / 2
+    
+    # 병목 영역에서 벽 충돌 방지
+    bottleneck_mask = (new_positions[:, 0] > bottleneck_position - 2.0) & (new_positions[:, 0] < bottleneck_position + 2.0)
+    wall_collision_upper = (new_positions[:, 1] > upper_wall_y - margin.squeeze()) & (new_positions[:, 1] < center_y)
+    wall_collision_lower = (new_positions[:, 1] < lower_wall_y + margin.squeeze()) & (new_positions[:, 1] > center_y)
+    
+    # 병목 벽에 닿으면 벽 경계로 밀어냄
+    new_positions[:, 1] = torch.where(bottleneck_mask & wall_collision_upper, 
+                                     upper_wall_y - margin.squeeze(), new_positions[:, 1])
+    new_positions[:, 1] = torch.where(bottleneck_mask & wall_collision_lower, 
+                                     lower_wall_y + margin.squeeze(), new_positions[:, 1])
+    
+    valid_positions = new_positions
+    valid_velocities = new_velocities  # 속도는 유지
     
     # 결과를 다시 에이전트 객체에 적용
     valid_positions_cpu = valid_positions.cpu().numpy()
@@ -298,11 +311,9 @@ def batch_update_positions_gpu(agents: List[Agent2D], new_velocities: torch.Tens
         agent.vx = float(valid_velocities_cpu[i, 0])
         agent.vy = float(valid_velocities_cpu[i, 1])
         
-        # 충돌한 에이전트에 페널티 추가
-        if collision_mask[i].item():
-            agent.collision_penalty_timer = getattr(agent, 'collision_penalty_timer', 0) + 1  # 3 → 1로 감소
+        # 충돌 페널티 시스템 제거
     
-    return int(collision_count.item())
+    return 0  # 더 이상 충돌 카운트하지 않음
 
 
 def batch_check_collisions_gpu(positions: torch.Tensor, radii: torch.Tensor,
