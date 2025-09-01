@@ -2,8 +2,8 @@
 Training CLI entry point
 """
 import sys
-from informarl_bneck.env import BottleneckInforMARLEnv
-from informarl_bneck.rl.runner import run_informarl_experiment
+from ..env import BottleneckInforMARLEnv
+from ..rl.runner import run_informarl_experiment
 
 
 def main():
@@ -32,7 +32,7 @@ def main():
     # 학습 후 애니메이션 보기
     print("\n학습 완료! 애니메이션으로 결과 확인 (y/n)?")
     if input().lower() == 'y':
-        from informarl_bneck.rl.runner import evaluate_with_animation
+        from ..rl.runner import evaluate_with_animation
         evaluate_with_animation(env, num_episodes=2, render_delay=0.15)
 
 

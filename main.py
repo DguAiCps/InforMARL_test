@@ -7,8 +7,8 @@ import os
 # Add src to path for direct execution
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from informarl_bneck.rl.runner import run_informarl_experiment, run_animation_demo, quick_movement_test
-from informarl_bneck.utils.config import get_env_params, load_all_configs
+from src.informarl_bneck.rl.runner import run_informarl_experiment, run_animation_demo, quick_movement_test
+from src.informarl_bneck.utils.config import get_env_params, load_all_configs
 
 
 def main():
@@ -66,7 +66,7 @@ def main():
         # 학습 후 애니메이션 보기
         print("\n학습 완료! 애니메이션으로 결과 확인 (y/n)?")
         if input().lower() == 'y':
-            from informarl_bneck.rl.runner import evaluate_with_animation
+            from src.informarl_bneck.rl.runner import evaluate_with_animation
             evaluate_with_animation(env, num_episodes=2, render_delay=0.15)
 
 

@@ -1,1 +1,3 @@
-# 순환 참조 방지를 위해 import 제거
+from .bottleneck_env import BottleneckInforMARLEnv
+
+__all__ = ["BottleneckInforMARLEnv"]

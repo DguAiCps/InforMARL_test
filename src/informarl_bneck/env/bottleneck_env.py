@@ -8,15 +8,14 @@ from torch_geometric.data import Data, Batch
 from typing import List, Dict, Any
 import numpy as np
 
-from informarl_bneck.utils.types import Agent2D, Landmark2D, Obstacle2D
-from informarl_bneck.models.gnn import GraphNeuralNetwork
-from informarl_bneck.models.agent import InforMARLAgent
-from informarl_bneck.utils.device import get_device, setup_gpu_environment
-from informarl_bneck.env.map import create_agents_and_landmarks, create_obstacles
-from informarl_bneck.env.physics import execute_action, update_positions
-from informarl_bneck.env.reward import calculate_rewards
-from informarl_bneck.env.graph_builder import build_graph_observations
-from informarl_bneck.env.render import BottleneckRenderer
+from ..utils.types import Agent2D, Landmark2D, Obstacle2D
+from ..models import GraphNeuralNetwork, InforMARLAgent
+from ..utils.device import get_device, setup_gpu_environment
+from .map import create_agents_and_landmarks, create_obstacles
+from .physics import execute_action, update_positions
+from .reward import calculate_rewards
+from .graph_builder import build_graph_observations
+from .render import BottleneckRenderer
 
 
 class BottleneckInforMARLEnv(gym.Env):
