@@ -80,16 +80,23 @@ class InforMARLAgent:
             for i in range(len(batch)):
                 start_idx = i * nodes_per_graph
                 # ego agent 임베딩 (Actor용)
-                agent_emb = node_embeddings[start_idx + self.agent_id]
+                if start_idx + self.agent_id < len(node_embeddings):
+                    agent_emb = node_embeddings[start_idx + self.agent_id]
+                else:
+                    agent_emb = node_embeddings[start_idx] if start_idx < len(node_embeddings) else node_embeddings[0]
                 agent_embeddings.append(agent_emb)
                 
                 # 전역 집계 (Critic용) - 모든 에이전트 노드들의 평균
                 num_agents = len([1 for exp in batch if exp])
-                agent_nodes = node_embeddings[start_idx:start_idx + min(num_agents, nodes_per_graph)]
-                if len(agent_nodes) > 0:
-                    global_agg = agent_nodes.mean(dim=0)
+                end_idx = min(start_idx + min(num_agents, nodes_per_graph), len(node_embeddings))
+                if start_idx < len(node_embeddings):
+                    agent_nodes = node_embeddings[start_idx:end_idx]
+                    if len(agent_nodes) > 0:
+                        global_agg = agent_nodes.mean(dim=0)
+                    else:
+                        global_agg = node_embeddings[start_idx]
                 else:
-                    global_agg = node_embeddings[start_idx]
+                    global_agg = node_embeddings[0]
                 global_embeddings.append(global_agg)
             
             agent_embeddings = torch.stack(agent_embeddings)

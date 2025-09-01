@@ -215,53 +215,58 @@ class BottleneckInforMARLEnv(gym.Env):
         return new_obs, rewards, done, info
     
     def _get_batch_actions(self, graph_observations: List[Data], training: bool = True):
-        """배치 행동 선택 - InforMARL 방식 (GPU 최적화)"""
+        """개별 그래프 처리 - 센싱 범위 제한 유지하면서 GPU 사용"""
         device = self.device
-        
-        # 🚀 배치 그래프 생성 및 GPU 전송 최적화
-        batch_graphs = Batch.from_data_list(graph_observations).to(device, non_blocking=True)
-        
-        # 공유 GNN으로 노드 임베딩 계산
-        node_embeddings = self.shared_gnn(batch_graphs)
-        
-        # 에이전트별 정보 추출
-        nodes_per_graph = len(graph_observations[0].x)
-        num_agents_in_graph = self.num_agents
         
         actions = []
         log_probs = []
         values = []
         
+        # 🚀 로컬 관측을 배치로 GPU 전송 (여전히 최적화 가능)
+        all_local_obs = []
+        for i in range(self.num_agents):
+            obs = self._get_local_observation(i)
+            all_local_obs.append(obs)
+        local_obs_batch = torch.tensor(all_local_obs, dtype=torch.float32).to(device, non_blocking=True)
+        
+        # 각 에이전트별로 개별 그래프 처리
+        agent_embeddings = []
+        global_embeddings = []
+        
+        for i in range(self.num_agents):
+            # 각 그래프를 개별적으로 GPU에서 처리
+            graph_data = graph_observations[i].to(device, non_blocking=True)
+            node_embeddings = self.shared_gnn(graph_data)
+            
+            # 에이전트 자신의 임베딩 (첫 번째 노드는 항상 ego agent)
+            ego_embedding = node_embeddings[i] if i < len(node_embeddings) else node_embeddings[0]
+            agent_embeddings.append(ego_embedding)
+            
+            # 전역 집계를 위한 모든 에이전트 노드들의 평균
+            # 센싱 범위 내 에이전트들만 포함 (논문의 핵심!)
+            agent_indices = []
+            for j, entity_type in enumerate(graph_data.entity_type):
+                if entity_type == 0:  # agent 타입
+                    agent_indices.append(j)
+            
+            if agent_indices:
+                agent_nodes = node_embeddings[agent_indices]
+                global_agg = agent_nodes.mean(dim=0)
+            else:
+                global_agg = ego_embedding
+            
+            global_embeddings.append(global_agg)
+        
+        # GPU에서 배치 처리
+        agent_embeddings_batch = torch.stack(agent_embeddings)
+        global_embeddings_batch = torch.stack(global_embeddings)
+        
         if training:
-            # 학습 시: Actor + Critic 모두 사용
-            agent_embeddings = []
-            for i in range(self.num_agents):
-                start_idx = i * nodes_per_graph
-                agent_emb = node_embeddings[start_idx + i]
-                agent_embeddings.append(agent_emb)
-            
-            # Critic용 전역 집계
-            graph_embeddings = []
-            for i in range(self.num_agents):
-                start_idx = i * nodes_per_graph
-                agent_nodes = node_embeddings[start_idx:start_idx + num_agents_in_graph]
-                graph_agg = agent_nodes.mean(dim=0)
-                graph_embeddings.append(graph_agg)
-            
-            global_agg = torch.stack(graph_embeddings)
-            global_values = self.informarl_agents[0].critic(global_agg)
-            
-            # 🚀 모든 로컬 관측을 한 번에 GPU로 전송
-            all_local_obs = []
-            for i in range(self.num_agents):
-                obs = self._get_local_observation(i)
-                all_local_obs.append(obs)
-            
-            local_obs_batch = torch.tensor(all_local_obs, dtype=torch.float32).to(device, non_blocking=True)
-            agent_embeddings_batch = torch.stack(agent_embeddings)
+            # Critic으로 값 함수 계산
+            global_values = self.informarl_agents[0].critic(global_embeddings_batch)
             
             for i, agent in enumerate(self.informarl_agents):
-                # Actor: 로컬 관측 + 집계 정보 (이미 GPU에 있음)
+                # Actor: 로컬 관측 + 집계 정보
                 local_obs = local_obs_batch[i].unsqueeze(0)
                 agg_info = agent_embeddings_batch[i].unsqueeze(0)
                 action_probs = agent.actor(local_obs, agg_info)
@@ -276,21 +281,6 @@ class BottleneckInforMARLEnv(gym.Env):
                 values.append(global_values[i].item())
         else:
             # 평가 시: Actor만 사용
-            agent_embeddings = []
-            for i in range(self.num_agents):
-                start_idx = i * nodes_per_graph
-                agent_emb = node_embeddings[start_idx + i]
-                agent_embeddings.append(agent_emb)
-            
-            # 🚀 평가 모드도 배치 처리로 GPU 최적화
-            all_local_obs = []
-            for i in range(self.num_agents):
-                obs = self._get_local_observation(i)
-                all_local_obs.append(obs)
-            
-            local_obs_batch = torch.tensor(all_local_obs, dtype=torch.float32).to(device, non_blocking=True)
-            agent_embeddings_batch = torch.stack(agent_embeddings)
-            
             for i, agent in enumerate(self.informarl_agents):
                 local_obs = local_obs_batch[i].unsqueeze(0)
                 agg_info = agent_embeddings_batch[i].unsqueeze(0)
