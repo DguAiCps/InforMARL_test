@@ -2,6 +2,7 @@
 Physics simulation for agent movement and collision handling
 """
 import math
+import torch
 from typing import List, Dict, Any
 from ..utils.types import Agent2D, Obstacle2D
 
@@ -190,3 +191,200 @@ def handle_collision(agent: Agent2D, collision_info: Dict[str, Any],
     
     # 충돌한 에이전트는 다음 스텝에서 잠시 느리게 움직임
     agent.collision_penalty_timer = getattr(agent, 'collision_penalty_timer', 0) + 3
+
+
+# =============================================================================
+# 🚀 GPU 배치 물리계산 함수들
+# =============================================================================
+
+def batch_execute_actions_gpu(agents: List[Agent2D], actions: List[int], device: torch.device) -> torch.Tensor:
+    """GPU에서 모든 에이전트 행동을 배치로 처리"""
+    num_agents = len(agents)
+    
+    # 현재 에이전트 상태를 텐서로 변환
+    positions = torch.tensor([[agent.x, agent.y] for agent in agents], dtype=torch.float32).to(device)
+    velocities = torch.tensor([[agent.vx, agent.vy] for agent in agents], dtype=torch.float32).to(device)
+    penalties = torch.tensor([getattr(agent, 'collision_penalty_timer', 0) for agent in agents], dtype=torch.float32).to(device)
+    max_speeds = torch.tensor([agent.max_speed for agent in agents], dtype=torch.float32).to(device)
+    actions_tensor = torch.tensor(actions, dtype=torch.long).to(device)
+    
+    # 충돌 페널티에 따른 속도 조정
+    normal_speed = max_speeds * 0.5
+    penalty_speed = max_speeds * 0.2
+    current_speeds = torch.where(penalties > 0, penalty_speed, normal_speed)
+    
+    # 행동을 속도 변화로 변환 (배치)
+    action_to_velocity_change = torch.tensor([
+        [0, 1],    # 위
+        [0, -1],   # 아래
+        [-1, 0],   # 왼쪽
+        [1, 0]     # 오른쪽
+    ], dtype=torch.float32).to(device)
+    
+    velocity_changes = action_to_velocity_change[actions_tensor] * current_speeds.unsqueeze(1)
+    new_velocities = velocities + velocity_changes
+    
+    # 최대 속도 제한 (배치)
+    max_speed_limit = max_speeds.unsqueeze(1)
+    new_velocities = torch.clamp(new_velocities, -max_speed_limit, max_speed_limit)
+    
+    # 속도 감쇠 (배치)
+    decay_normal = torch.full_like(penalties, 0.9)
+    decay_penalty = torch.full_like(penalties, 0.7)
+    decay_factors = torch.where(penalties > 0, decay_penalty, decay_normal).unsqueeze(1)
+    new_velocities = new_velocities * decay_factors
+    
+    # 페널티 타이머 감소
+    new_penalties = torch.clamp(penalties - 1, min=0)
+    
+    return new_velocities, new_penalties
+
+
+def batch_update_positions_gpu(agents: List[Agent2D], new_velocities: torch.Tensor, 
+                              obstacles: List[Obstacle2D], corridor_width: float, 
+                              corridor_height: float, bottleneck_position: float, 
+                              bottleneck_width: float, device: torch.device, dt: float = 0.1) -> int:
+    """GPU에서 모든 에이전트 위치를 배치로 업데이트"""
+    num_agents = len(agents)
+    
+    # 현재 위치를 텐서로 변환
+    positions = torch.tensor([[agent.x, agent.y] for agent in agents], dtype=torch.float32).to(device)
+    radii = torch.tensor([agent.radius for agent in agents], dtype=torch.float32).to(device)
+    
+    # 새로운 위치 계산
+    new_positions = positions + new_velocities * dt
+    
+    # 🚀 GPU에서 배치 충돌 검사
+    collision_mask, collision_count = batch_check_collisions_gpu(
+        new_positions, radii, obstacles, corridor_width, corridor_height, 
+        bottleneck_position, bottleneck_width, device
+    )
+    
+    # 충돌이 없는 에이전트만 위치 업데이트
+    valid_positions = torch.where(collision_mask.unsqueeze(1), positions, new_positions)
+    valid_velocities = torch.where(collision_mask.unsqueeze(1), torch.zeros_like(new_velocities), new_velocities)
+    
+    # 결과를 다시 에이전트 객체에 적용
+    valid_positions_cpu = valid_positions.cpu().numpy()
+    valid_velocities_cpu = valid_velocities.cpu().numpy()
+    
+    for i, agent in enumerate(agents):
+        agent.x = float(valid_positions_cpu[i, 0])
+        agent.y = float(valid_positions_cpu[i, 1])
+        agent.vx = float(valid_velocities_cpu[i, 0])
+        agent.vy = float(valid_velocities_cpu[i, 1])
+        
+        # 충돌한 에이전트에 페널티 추가
+        if collision_mask[i].item():
+            agent.collision_penalty_timer = getattr(agent, 'collision_penalty_timer', 0) + 3
+    
+    return int(collision_count.item())
+
+
+def batch_check_collisions_gpu(positions: torch.Tensor, radii: torch.Tensor,
+                              obstacles: List[Obstacle2D], corridor_width: float,
+                              corridor_height: float, bottleneck_position: float,
+                              bottleneck_width: float, device: torch.device) -> tuple:
+    """GPU에서 배치 충돌 검사"""
+    num_agents = positions.shape[0]
+    collision_mask = torch.zeros(num_agents, dtype=torch.bool).to(device)
+    
+    # 1. 경계 충돌 검사 (배치)
+    x_pos = positions[:, 0]
+    y_pos = positions[:, 1]
+    
+    boundary_collision = (
+        (x_pos - radii < 0) | 
+        (x_pos + radii > corridor_width) |
+        (y_pos - radii < 0) | 
+        (y_pos + radii > corridor_height)
+    )
+    collision_mask = collision_mask | boundary_collision
+    
+    # 2. 병목 벽 충돌 검사 (배치)
+    bottleneck_collision = batch_check_bottleneck_collision_gpu(
+        positions, radii, corridor_height, bottleneck_position, bottleneck_width, device
+    )
+    collision_mask = collision_mask | bottleneck_collision
+    
+    # 3. 에이전트 간 충돌 검사 (배치)
+    if num_agents > 1:
+        agent_collision = batch_check_agent_collisions_gpu(positions, radii, device)
+        collision_mask = collision_mask | agent_collision
+    
+    # 4. 장애물 충돌 검사 (배치)
+    if obstacles:
+        obstacle_collision = batch_check_obstacle_collisions_gpu(positions, radii, obstacles, device)
+        collision_mask = collision_mask | obstacle_collision
+    
+    collision_count = collision_mask.sum()
+    return collision_mask, collision_count
+
+
+def batch_check_bottleneck_collision_gpu(positions: torch.Tensor, radii: torch.Tensor,
+                                        corridor_height: float, bottleneck_position: float,
+                                        bottleneck_width: float, device: torch.device) -> torch.Tensor:
+    """GPU에서 병목 충돌 검사"""
+    x_pos = positions[:, 0]
+    y_pos = positions[:, 1]
+    
+    center_y = corridor_height / 2
+    
+    # 병목 구역에 있는 에이전트만 체크
+    in_bottleneck_area = torch.abs(x_pos - bottleneck_position) <= 1.0
+    
+    # 통로 범위
+    passage_top = center_y + bottleneck_width / 2
+    passage_bottom = center_y - bottleneck_width / 2
+    
+    # 에이전트 범위 (반지름 고려)
+    agent_top = y_pos + radii
+    agent_bottom = y_pos - radii
+    
+    # 통로를 벗어난 에이전트
+    outside_passage = (agent_bottom < passage_bottom) | (agent_top > passage_top)
+    
+    return in_bottleneck_area & outside_passage
+
+
+def batch_check_agent_collisions_gpu(positions: torch.Tensor, radii: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """GPU에서 에이전트 간 충돌 검사"""
+    num_agents = positions.shape[0]
+    
+    # 모든 에이전트 쌍 간의 거리 계산
+    distance_matrix = torch.cdist(positions, positions, p=2)
+    
+    # 각 에이전트 쌍의 최소 거리 (반지름의 합)
+    radii_sum_matrix = radii.unsqueeze(0) + radii.unsqueeze(1)
+    
+    # 대각선 제거 (자기 자신과의 거리)
+    mask = torch.eye(num_agents, dtype=torch.bool, device=device)
+    distance_matrix = distance_matrix.masked_fill(mask, float('inf'))
+    
+    # 충돌 검사
+    collision_matrix = distance_matrix < radii_sum_matrix
+    collision_mask = collision_matrix.any(dim=1)
+    
+    return collision_mask
+
+
+def batch_check_obstacle_collisions_gpu(positions: torch.Tensor, radii: torch.Tensor,
+                                       obstacles: List[Obstacle2D], device: torch.device) -> torch.Tensor:
+    """GPU에서 장애물 충돌 검사"""
+    num_agents = positions.shape[0]
+    collision_mask = torch.zeros(num_agents, dtype=torch.bool).to(device)
+    
+    # 각 장애물에 대해 검사
+    for obstacle in obstacles:
+        obstacle_pos = torch.tensor([obstacle.x, obstacle.y], dtype=torch.float32).to(device)
+        obstacle_radius = obstacle.radius
+        
+        # 모든 에이전트와 이 장애물 간의 거리
+        distances = torch.norm(positions - obstacle_pos, dim=1)
+        min_distances = radii + obstacle_radius
+        
+        # 충돌 검사
+        obstacle_collision = distances < min_distances
+        collision_mask = collision_mask | obstacle_collision
+    
+    return collision_mask

@@ -12,7 +12,7 @@ from ..utils.types import Agent2D, Landmark2D, Obstacle2D
 from ..models import GraphNeuralNetwork, InforMARLAgent
 from ..utils.device import get_device, setup_gpu_environment
 from .map import create_agents_and_landmarks, create_obstacles
-from .physics import execute_action, update_positions
+from .physics import execute_action, update_positions, batch_execute_actions_gpu, batch_update_positions_gpu
 from .reward import calculate_rewards
 from .graph_builder import build_graph_observations
 from .render import BottleneckRenderer
@@ -136,15 +136,31 @@ class BottleneckInforMARLEnv(gym.Env):
             log_probs = [0.0] * len(actions)
             values = [0.0] * len(actions)
         
-        # 행동 실행
-        for i, action in enumerate(actions):
-            execute_action(self.agents[i], action)
-        
-        # 물리 업데이트
-        collision_count = update_positions(
-            self.agents, self.obstacles, self.corridor_width, self.corridor_height,
-            self.bottleneck_position, self.bottleneck_width
-        )
+        # 🚀 GPU 배치 물리 계산 (기존 CPU 방식보다 훨씬 빠름)
+        try:
+            # GPU에서 행동 실행 (배치)
+            new_velocities, new_penalties = batch_execute_actions_gpu(self.agents, actions, self.device)
+            
+            # 페널티 타이머 업데이트
+            for i, agent in enumerate(self.agents):
+                agent.collision_penalty_timer = int(new_penalties[i].item())
+            
+            # GPU에서 위치 업데이트 (배치)
+            collision_count = batch_update_positions_gpu(
+                self.agents, new_velocities, self.obstacles, 
+                self.corridor_width, self.corridor_height,
+                self.bottleneck_position, self.bottleneck_width, self.device
+            )
+        except Exception as e:
+            # GPU 실패 시 CPU 백업
+            print(f"GPU physics failed, using CPU: {e}")
+            for i, action in enumerate(actions):
+                execute_action(self.agents[i], action)
+            
+            collision_count = update_positions(
+                self.agents, self.obstacles, self.corridor_width, self.corridor_height,
+                self.bottleneck_position, self.bottleneck_width
+            )
         self.collision_count += collision_count
         
         # 보상 계산
