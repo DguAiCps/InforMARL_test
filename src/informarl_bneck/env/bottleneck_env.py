@@ -140,8 +140,6 @@ class BottleneckInforMARLEnv(gym.Env):
     def step(self, actions: List[int] = None):
         """환경 스텝 실행"""
         self.timestep += 1
-        if self.timestep % 10 == 0:  # 10 스텝마다 진행상황 출력
-            print(f"  Step {self.timestep}...")
         
         # 그래프 관측 생성 (설정에 따라 GPU/CPU 선택)
         if self.use_gpu_graph:
@@ -161,8 +159,6 @@ class BottleneckInforMARLEnv(gym.Env):
         
         # 행동 선택 (배치 처리)
         if actions is None:
-            if self.timestep % 50 == 0:  # 50 스텝마다 행동 선택 과정 출력
-                print(f"    Getting actions at step {self.timestep}...")
             actions, log_probs, values = self._get_batch_actions(graph_obs, training=True)
         else:
             log_probs = [0.0] * len(actions)

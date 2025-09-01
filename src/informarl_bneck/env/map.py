@@ -51,9 +51,9 @@ def create_obstacles(corridor_width: float, corridor_height: float,
     obstacle_id = 0
     
     # 에이전트 지름 = agent_radius * 2 = 1.0
-    # 장애물 간격을 에이전트 지름의 1/3로 설정하여 촘촘하게
-    obstacle_spacing = (agent_radius * 2) / 3  # ≈ 0.33
-    obstacle_radius = obstacle_spacing / 2  # 장애물 반지름
+    # 장애물 간격을 에이전트 지름과 같게 설정하여 성능 향상 (원래 1/3에서 1/1로)
+    obstacle_spacing = agent_radius * 2  # 0.33 → 1.0 (3배 증가)
+    obstacle_radius = obstacle_spacing / 4  # 장애물 반지름을 좀 더 작게
     
     # 1. 상단 경계벽 (전체 너비)
     num_top_obstacles = int(corridor_width / obstacle_spacing) + 1
