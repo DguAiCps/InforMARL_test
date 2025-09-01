@@ -396,11 +396,12 @@ class BottleneckInforMARLEnv(gym.Env):
             "avg_time_ratio": self.timestep / self.max_timesteps
         }
     
-    def render(self, mode='human'):
+    def render(self, mode='human', show_waypoints=True):
         """환경 렌더링"""
         self.renderer.render(
             self.agents, self.landmarks, self.obstacles,
             self.corridor_width, self.corridor_height,
             self.bottleneck_position, self.bottleneck_width,
-            self.timestep, self.success_count, self.collision_count
+            self.timestep, self.success_count, self.collision_count,
+            show_waypoints=show_waypoints
         )

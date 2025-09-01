@@ -17,7 +17,8 @@ class BottleneckRenderer:
     
     def render(self, agents: List[Agent2D], landmarks: List[Landmark2D], obstacles: List[Obstacle2D],
                corridor_width: float, corridor_height: float, bottleneck_position: float, 
-               bottleneck_width: float, timestep: int, success_count: int, collision_count: int):
+               bottleneck_width: float, timestep: int, success_count: int, collision_count: int,
+               show_waypoints: bool = True):
         """환경 렌더링"""
         if self.fig is None:
             self.fig, self.ax = plt.subplots(figsize=(14, 8))
@@ -99,7 +100,39 @@ class BottleneckRenderer:
                         ha='center', va='center', fontweight='bold', 
                         color='white', fontsize=8)
             
-            # 목표까지의 선
+            # waypoint 경로 표시
+            if show_waypoints and hasattr(agent, 'waypoints') and agent.waypoints:
+                waypoints = agent.waypoints
+                
+                # waypoint들을 선으로 연결
+                wp_x = [wp[0] for wp in waypoints]
+                wp_y = [wp[1] for wp in waypoints]
+                
+                # 경로 선 그리기 (점선, 에이전트와 같은 색상)
+                self.ax.plot(wp_x, wp_y, '--', color=color, alpha=0.6, linewidth=2, 
+                           label=f'Agent {i} Path' if i < 3 else "")
+                
+                # waypoint 점들 표시
+                for j, (wx, wy) in enumerate(waypoints[1:], 1):  # 시작점 제외
+                    wp_circle = patches.Circle(
+                        (wx, wy), 0.15, 
+                        color=color, alpha=0.5, edgecolor=color, linewidth=1
+                    )
+                    self.ax.add_patch(wp_circle)
+                    # waypoint 번호
+                    self.ax.text(wx, wy, str(j), ha='center', va='center', 
+                               fontsize=6, color='white', fontweight='bold')
+                
+                # 현재 목표 waypoint 강조
+                if hasattr(agent, 'current_waypoint'):
+                    cx, cy = agent.current_waypoint
+                    current_wp = patches.Circle(
+                        (cx, cy), 0.25, 
+                        color=color, alpha=0.8, edgecolor='white', linewidth=2
+                    )
+                    self.ax.add_patch(current_wp)
+            
+            # 최종 목표까지의 선 (기존)
             target = landmarks[agent.target_id]
             self.ax.plot([agent.x, target.x], [agent.y, target.y], 
                         color=color, alpha=0.5, linestyle='--', linewidth=1.5)

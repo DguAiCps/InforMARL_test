@@ -156,7 +156,7 @@ def quick_movement_test(num_agents: int = 2) -> bool:
     env.render()
     time.sleep(1)
     
-    for step in range(20):
+    for step in range(300):
         # 랜덤 행동으로 테스트
         random_actions = [np.random.randint(0, 4) for _ in range(num_agents)]
         
