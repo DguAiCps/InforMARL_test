@@ -155,25 +155,29 @@ def handle_collision(agent: Agent2D, collision_info: Dict[str, Any],
     """강화된 충돌 처리"""
     collision_type = collision_info['collision_type']
     
-    # 충돌 시 벽에서 밀어내는 반발력 추가
+    # 충돌 시 벽에서 밀어내는 강력한 반발력
     if collision_type == 'boundary':
-        # 벽 충돌: 벽 방향으로 반발력 + 평행 방향 속도 감소
         margin = agent.radius + 0.1
-        repulsion_force = 0.3  # 반발력 크기
+        repulsion_force = 0.8  # 더 큰 반발력
         
+        # 위치 강제 조정 + 반발력
         if agent.x <= margin:  # 왼쪽 벽
-            agent.vx = repulsion_force  # 오른쪽으로 밀어냄
-            agent.vy *= 0.5
+            agent.x = margin + 0.05  # 위치 강제 조정
+            agent.vx = repulsion_force  # 강한 반발력
+            agent.vy *= 0.3  # 평행 방향 더 감소
         elif agent.x >= corridor_width - margin:  # 오른쪽 벽
-            agent.vx = -repulsion_force  # 왼쪽으로 밀어냄
-            agent.vy *= 0.5
+            agent.x = corridor_width - margin - 0.05  # 위치 강제 조정
+            agent.vx = -repulsion_force  # 강한 반발력
+            agent.vy *= 0.3
             
         if agent.y <= margin:  # 아래쪽 벽
-            agent.vy = repulsion_force  # 위로 밀어냄
-            agent.vx *= 0.5
+            agent.y = margin + 0.05  # 위치 강제 조정
+            agent.vy = repulsion_force  # 강한 반발력
+            agent.vx *= 0.3
         elif agent.y >= corridor_height - margin:  # 위쪽 벽
-            agent.vy = -repulsion_force  # 아래로 밀어냄
-            agent.vx *= 0.5
+            agent.y = corridor_height - margin - 0.05  # 위치 강제 조정
+            agent.vy = -repulsion_force  # 강한 반발력
+            agent.vx *= 0.3
     else:
         # 장애물/에이전트 충돌: 전체 속도 감소
         agent.vx *= 0.3
