@@ -253,33 +253,41 @@ class BottleneckInforMARLEnv(gym.Env):
             all_local_obs.append(obs)
         local_obs_batch = torch.tensor(all_local_obs, dtype=torch.float32).to(device, non_blocking=True)
         
-        # 각 에이전트별로 개별 그래프 처리
+        # 🚀 배치 처리로 모든 그래프를 한 번에 GNN 통과
+        batch_graphs = Batch.from_data_list(graph_observations).to(device, non_blocking=True)
+        all_embeddings = self.shared_gnn(batch_graphs)
+        
+        # 각 그래프별로 임베딩 분리
         agent_embeddings = []
         global_embeddings = []
         
+        current_idx = 0
         for i in range(self.num_agents):
-            # 각 그래프를 개별적으로 GPU에서 처리
-            graph_data = graph_observations[i].to(device, non_blocking=True)
-            node_embeddings = self.shared_gnn(graph_data)
+            graph_size = len(graph_observations[i].x)
             
-            # 에이전트 자신의 임베딩 (첫 번째 노드는 항상 ego agent)
-            ego_embedding = node_embeddings[i] if i < len(node_embeddings) else node_embeddings[0]
+            # 이 그래프의 임베딩 추출
+            graph_embeddings = all_embeddings[current_idx:current_idx + graph_size]
+            
+            # 에이전트 자신의 임베딩 (보통 첫 번째 노드)
+            ego_embedding = graph_embeddings[i] if i < len(graph_embeddings) else graph_embeddings[0]
             agent_embeddings.append(ego_embedding)
             
             # 전역 집계를 위한 모든 에이전트 노드들의 평균
             # 센싱 범위 내 에이전트들만 포함 (논문의 핵심!)
             agent_indices = []
-            for j, entity_type in enumerate(graph_data.entity_type):
+            for j, entity_type in enumerate(graph_observations[i].entity_type):
                 if entity_type == 0:  # agent 타입
                     agent_indices.append(j)
             
             if agent_indices:
-                agent_nodes = node_embeddings[agent_indices]
+                agent_nodes = graph_embeddings[agent_indices]
                 global_agg = agent_nodes.mean(dim=0)
             else:
                 global_agg = ego_embedding
             
             global_embeddings.append(global_agg)
+            
+            current_idx += graph_size
         
         # GPU에서 배치 처리
         agent_embeddings_batch = torch.stack(agent_embeddings)
