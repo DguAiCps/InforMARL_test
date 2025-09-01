@@ -50,7 +50,7 @@ def main():
             run_animation_demo(num_agents=num_agents)  # YAML 값 사용
         elif sys.argv[1] == "test":
             # 빠른 움직임 테스트  
-            quick_movement_test(num_agents=min(num_agents, 2))  # YAML 값 사용 (최대 2개)
+            quick_movement_test(num_agents=min(num_agents, 2))  # YAML 값 사용 (최소 2개)
         else:
             print("사용법: python main.py [demo|test]")
     else:

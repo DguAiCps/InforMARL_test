@@ -14,7 +14,7 @@ from ..utils.device import get_device, setup_gpu_environment
 from .map import create_agents_and_landmarks, create_obstacles
 from .physics import execute_action, update_positions, batch_execute_actions_gpu, batch_update_positions_gpu
 from .reward import calculate_rewards
-from .graph_builder import build_graph_observations
+from .graph_builder import build_graph_observations, batch_build_graph_observations_gpu
 from .render import BottleneckRenderer
 
 
@@ -116,18 +116,31 @@ class BottleneckInforMARLEnv(gym.Env):
             self.shared_gnn = GraphNeuralNetwork().to(self.device)
             self.gnn_optimizer = torch.optim.Adam(self.shared_gnn.parameters(), lr=0.003)
         
-        return build_graph_observations(
-            self.agents, self.landmarks, self.obstacles, self.sensing_radius
-        )
+        # 🚀 reset에서도 GPU 그래프 사용
+        try:
+            return batch_build_graph_observations_gpu(
+                self.agents, self.landmarks, self.obstacles, self.sensing_radius, self.device
+            )
+        except Exception as e:
+            print(f"GPU graph building failed in reset, using CPU: {e}")
+            return build_graph_observations(
+                self.agents, self.landmarks, self.obstacles, self.sensing_radius
+            )
     
     def step(self, actions: List[int] = None):
         """환경 스텝 실행"""
         self.timestep += 1
         
-        # 그래프 관측
-        graph_obs = build_graph_observations(
-            self.agents, self.landmarks, self.obstacles, self.sensing_radius
-        )
+        # 🚀 GPU 그래프 관측 생성 (CPU 병목 해결)
+        try:
+            graph_obs = batch_build_graph_observations_gpu(
+                self.agents, self.landmarks, self.obstacles, self.sensing_radius, self.device
+            )
+        except Exception as e:
+            print(f"GPU graph building failed, using CPU: {e}")
+            graph_obs = build_graph_observations(
+                self.agents, self.landmarks, self.obstacles, self.sensing_radius
+            )
         
         # 행동 선택 (배치 처리)
         if actions is None:
@@ -186,9 +199,16 @@ class BottleneckInforMARLEnv(gym.Env):
                 }
                 self.informarl_agents[i].store_experience(experience)
         
-        new_obs = build_graph_observations(
-            self.agents, self.landmarks, self.obstacles, self.sensing_radius
-        )
+        # 🚀 step 끝에서도 GPU 그래프 사용
+        try:
+            new_obs = batch_build_graph_observations_gpu(
+                self.agents, self.landmarks, self.obstacles, self.sensing_radius, self.device
+            )
+        except Exception as e:
+            print(f"GPU graph building failed in step end, using CPU: {e}")
+            new_obs = build_graph_observations(
+                self.agents, self.landmarks, self.obstacles, self.sensing_radius
+            )
         done = self._is_done()
         info = self._get_info()
         
