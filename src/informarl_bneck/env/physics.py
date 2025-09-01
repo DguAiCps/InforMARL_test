@@ -155,9 +155,20 @@ def handle_collision(agent: Agent2D, collision_info: Dict[str, Any],
     """강화된 충돌 처리"""
     collision_type = collision_info['collision_type']
     
-    # 즉시 속도를 0으로 만들어 추가 침투 방지
-    agent.vx = 0.0
-    agent.vy = 0.0
+    # 충돌 시 벽 방향 속도는 0으로, 나머지는 감소
+    if collision_type == 'boundary':
+        # 벽 충돌: 벽 방향 속도만 0으로
+        margin = agent.radius + 0.1
+        if agent.x <= margin or agent.x >= corridor_width - margin:
+            agent.vx = 0.0  # 좌우 벽: x 속도 0
+            agent.vy *= 0.5  # y 속도는 50%로 감소
+        if agent.y <= margin or agent.y >= corridor_height - margin:
+            agent.vy = 0.0  # 상하 벽: y 속도 0  
+            agent.vx *= 0.5  # x 속도는 50%로 감소
+    else:
+        # 장애물/에이전트 충돌: 전체 속도 감소
+        agent.vx *= 0.3
+        agent.vy *= 0.3
     
     # 충돌 타입별 추가 처리
     if collision_type == 'boundary':
@@ -190,7 +201,7 @@ def handle_collision(agent: Agent2D, collision_info: Dict[str, Any],
                 agent.y += (dy / dist) * push_distance
     
     # 충돌한 에이전트는 다음 스텝에서 잠시 느리게 움직임
-    agent.collision_penalty_timer = getattr(agent, 'collision_penalty_timer', 0) + 3
+    agent.collision_penalty_timer = getattr(agent, 'collision_penalty_timer', 0) + 1  # 3 → 1로 감소
 
 
 # =============================================================================
@@ -276,7 +287,7 @@ def batch_update_positions_gpu(agents: List[Agent2D], new_velocities: torch.Tens
         
         # 충돌한 에이전트에 페널티 추가
         if collision_mask[i].item():
-            agent.collision_penalty_timer = getattr(agent, 'collision_penalty_timer', 0) + 3
+            agent.collision_penalty_timer = getattr(agent, 'collision_penalty_timer', 0) + 1  # 3 → 1로 감소
     
     return int(collision_count.item())
 
