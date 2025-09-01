@@ -53,6 +53,7 @@ class BottleneckInforMARLEnv(gym.Env):
             
             # 성능 설정
             self.use_gpu_graph = config.get('use_gpu_graph', False)
+            self.include_obstacles_in_gnn = config.get('include_obstacles_in_gnn', True)
             force_cpu = config.get('force_cpu', force_cpu)
         else:
             # 기본값 사용
@@ -65,6 +66,7 @@ class BottleneckInforMARLEnv(gym.Env):
             self.sensing_radius = sensing_radius
             self.max_timesteps = max_timesteps
             self.use_gpu_graph = False  # 기본값: CPU 그래프
+            self.include_obstacles_in_gnn = True  # 기본값: 장애물 포함
         
         # 행동 공간: [위, 아래, 왼쪽, 오른쪽]
         self.action_space = spaces.Discrete(4)
@@ -125,16 +127,19 @@ class BottleneckInforMARLEnv(gym.Env):
         if self.use_gpu_graph:
             try:
                 return batch_build_graph_observations_gpu(
-                    self.agents, self.landmarks, self.obstacles, self.sensing_radius, self.device
+                    self.agents, self.landmarks, self.obstacles, self.sensing_radius, 
+                    self.device, self.include_obstacles_in_gnn
                 )
             except Exception as e:
                 print(f"GPU graph building failed in reset, using CPU: {e}")
                 return build_graph_observations(
-                    self.agents, self.landmarks, self.obstacles, self.sensing_radius
+                    self.agents, self.landmarks, self.obstacles, self.sensing_radius,
+                    self.include_obstacles_in_gnn
                 )
         else:
             return build_graph_observations(
-                self.agents, self.landmarks, self.obstacles, self.sensing_radius
+                self.agents, self.landmarks, self.obstacles, self.sensing_radius,
+                self.include_obstacles_in_gnn
             )
     
     def step(self, actions: List[int] = None):
@@ -145,16 +150,19 @@ class BottleneckInforMARLEnv(gym.Env):
         if self.use_gpu_graph:
             try:
                 graph_obs = batch_build_graph_observations_gpu(
-                    self.agents, self.landmarks, self.obstacles, self.sensing_radius, self.device
+                    self.agents, self.landmarks, self.obstacles, self.sensing_radius, 
+                    self.device, self.include_obstacles_in_gnn
                 )
             except Exception as e:
                 print(f"GPU graph building failed, using CPU: {e}")
                 graph_obs = build_graph_observations(
-                    self.agents, self.landmarks, self.obstacles, self.sensing_radius
+                    self.agents, self.landmarks, self.obstacles, self.sensing_radius,
+                    self.include_obstacles_in_gnn
                 )
         else:
             graph_obs = build_graph_observations(
-                self.agents, self.landmarks, self.obstacles, self.sensing_radius
+                self.agents, self.landmarks, self.obstacles, self.sensing_radius,
+                self.include_obstacles_in_gnn
             )
         
         # 행동 선택 (배치 처리)
@@ -218,16 +226,19 @@ class BottleneckInforMARLEnv(gym.Env):
         if self.use_gpu_graph:
             try:
                 new_obs = batch_build_graph_observations_gpu(
-                    self.agents, self.landmarks, self.obstacles, self.sensing_radius, self.device
+                    self.agents, self.landmarks, self.obstacles, self.sensing_radius, 
+                    self.device, self.include_obstacles_in_gnn
                 )
             except Exception as e:
                 print(f"GPU graph building failed in step end, using CPU: {e}")
                 new_obs = build_graph_observations(
-                    self.agents, self.landmarks, self.obstacles, self.sensing_radius
+                    self.agents, self.landmarks, self.obstacles, self.sensing_radius,
+                    self.include_obstacles_in_gnn
                 )
         else:
             new_obs = build_graph_observations(
-                self.agents, self.landmarks, self.obstacles, self.sensing_radius
+                self.agents, self.landmarks, self.obstacles, self.sensing_radius,
+                self.include_obstacles_in_gnn
             )
         done = self._is_done()
         info = self._get_info()

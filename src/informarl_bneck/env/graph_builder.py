@@ -10,7 +10,8 @@ from ..utils.types import Agent2D, Landmark2D, Obstacle2D, ENTITY_TYPES
 
 
 def build_graph_observations(agents: List[Agent2D], landmarks: List[Landmark2D], 
-                           obstacles: List[Obstacle2D], sensing_radius: float) -> List[Data]:
+                           obstacles: List[Obstacle2D], sensing_radius: float,
+                           include_obstacles: bool = True) -> List[Data]:
     """InforMARL 방식 그래프 관측 생성"""
     observations = []
     
@@ -48,15 +49,16 @@ def build_graph_observations(agents: List[Agent2D], landmarks: List[Landmark2D],
             entity_types.append(ENTITY_TYPES["landmark"])
             all_entities.append(('landmark', landmark))
         
-        # 3. 장애물 노드들
-        for obstacle in obstacles:
-            rel_x = (obstacle.x - ego_agent.x) / sensing_radius
-            rel_y = (obstacle.y - ego_agent.y) / sensing_radius
-            
-            features = [rel_x, rel_y, 0.0, 0.0, rel_x, rel_y]  # 장애물은 정지
-            node_features.append(features)
-            entity_types.append(ENTITY_TYPES["obstacle"])
-            all_entities.append(('obstacle', obstacle))
+        # 3. 장애물 노드들 (설정에 따라 포함/제외)
+        if include_obstacles:
+            for obstacle in obstacles:
+                rel_x = (obstacle.x - ego_agent.x) / sensing_radius
+                rel_y = (obstacle.y - ego_agent.y) / sensing_radius
+                
+                features = [rel_x, rel_y, 0.0, 0.0, rel_x, rel_y]  # 장애물은 정지
+                node_features.append(features)
+                entity_types.append(ENTITY_TYPES["obstacle"])
+                all_entities.append(('obstacle', obstacle))
         
         # 4. 엣지 생성 (논문의 방향성 규칙에 따라)
         edge_index, edge_attr = build_edges(all_entities, ego_agent, sensing_radius)
@@ -142,12 +144,12 @@ def build_edges(all_entities, ego_agent: Agent2D, sensing_radius: float):
 
 def batch_build_graph_observations_gpu(agents: List[Agent2D], landmarks: List[Landmark2D], 
                                       obstacles: List[Obstacle2D], sensing_radius: float, 
-                                      device: torch.device) -> List[Data]:
+                                      device: torch.device, include_obstacles: bool = True) -> List[Data]:
     """GPU에서 모든 에이전트의 그래프 관측을 배치로 생성 - 대폭 성능 향상"""
     
     num_agents = len(agents)
     num_landmarks = len(landmarks)
-    num_obstacles = len(obstacles)
+    num_obstacles = len(obstacles) if include_obstacles else 0
     total_entities = num_agents + num_landmarks + num_obstacles
     
     if total_entities == 0:
