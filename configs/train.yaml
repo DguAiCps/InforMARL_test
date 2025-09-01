@@ -1,9 +1,9 @@
 # Training configuration
 training:
-  num_episodes: 100
+  num_episodes: 500
   learning_rate: 0.001  # 기존 0.03에서 낮춤
   batch_size: 32
-  update_frequency: 10  # 매 10스텝마다 업데이트
+  update_frequency: 50  # 매 10스텝마다 업데이트
   
   # PPO parameters
   ppo_epochs: 4
