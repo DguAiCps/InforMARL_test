@@ -35,6 +35,13 @@ def update_positions(agents: List[Agent2D], obstacles: List[Obstacle2D],
         new_x = agent.x + agent.vx * dt
         new_y = agent.y + agent.vy * dt
         
+        # 🚀 충돌 감지 (보상 계산용)
+        collision_info = check_collision_detailed(
+            agent, new_x, new_y, agents, obstacles,
+            corridor_width, corridor_height, bottleneck_position, bottleneck_width
+        )
+        has_collision = collision_info['has_collision']
+        
         # 🚀 하드 경계 제약 적용 - 경계 내에 강제로 유지
         margin = agent.radius
         
@@ -59,8 +66,15 @@ def update_positions(agents: List[Agent2D], obstacles: List[Obstacle2D],
         # 위치 업데이트 (속도는 유지)
         agent.x = new_x
         agent.y = new_y
+        
+        # 보상 계산용 충돌 정보 설정 (물리적 제약은 적용하지 않음)
+        if has_collision:
+            agent.collision_penalty_timer = 1  # 보상용으로만 사용
+            collision_count += 1
+        else:
+            agent.collision_penalty_timer = max(0, getattr(agent, 'collision_penalty_timer', 0) - 1)
     
-    return 0  # 더 이상 충돌 카운트하지 않음
+    return collision_count
 
 
 def check_collision_detailed(agent: Agent2D, new_x: float, new_y: float,
@@ -269,6 +283,12 @@ def batch_update_positions_gpu(agents: List[Agent2D], new_velocities: torch.Tens
     # 새로운 위치 계산
     new_positions = positions + new_velocities * dt
     
+    # 🚀 충돌 감지 (보상 계산용) - 제약 적용 전 위치로 검사
+    collision_mask, collision_count = batch_check_collisions_gpu(
+        new_positions, radii, obstacles, corridor_width, corridor_height, 
+        bottleneck_position, bottleneck_width, device
+    )
+    
     # 🚀 하드 경계 제약 적용 - 에이전트를 경계 내에 강제로 유지
     margin = radii.unsqueeze(1)  # [num_agents, 1]로 브로드캐스팅용
     
@@ -311,9 +331,13 @@ def batch_update_positions_gpu(agents: List[Agent2D], new_velocities: torch.Tens
         agent.vx = float(valid_velocities_cpu[i, 0])
         agent.vy = float(valid_velocities_cpu[i, 1])
         
-        # 충돌 페널티 시스템 제거
+        # 보상 계산용 충돌 정보 설정 (물리적 제약은 적용하지 않음)
+        if collision_mask[i].item():
+            agent.collision_penalty_timer = 1  # 보상용으로만 사용
+        else:
+            agent.collision_penalty_timer = max(0, getattr(agent, 'collision_penalty_timer', 0) - 1)
     
-    return 0  # 더 이상 충돌 카운트하지 않음
+    return int(collision_count.item())
 
 
 def batch_check_collisions_gpu(positions: torch.Tensor, radii: torch.Tensor,
