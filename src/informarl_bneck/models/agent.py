@@ -19,7 +19,8 @@ class InforMARLAgent:
         self.device = device if device is not None else get_device()
         
         # 네트워크 초기화 (GNN은 공유되므로 별도)
-        self.actor = Actor(obs_dim=obs_dim, action_dim=action_dim).to(self.device)
+        # obs_dim: 6 (기본) + 3 (waypoint) = 9
+        self.actor = Actor(obs_dim=obs_dim+3, action_dim=action_dim).to(self.device)
         self.critic = Critic().to(self.device)
         
         # 옵티마이저 (개별 Actor/Critic만, GNN은 별도로 관리)

@@ -14,8 +14,10 @@ from ..utils.device import get_device, setup_gpu_environment
 from .map import create_agents_and_landmarks, create_obstacles
 from .physics import execute_action, update_positions, batch_execute_actions_gpu, batch_update_positions_gpu
 from .reward import calculate_rewards
+from .waypoint_reward import calculate_waypoint_rewards
 from .graph_builder import build_graph_observations, batch_build_graph_observations_gpu
 from .render import BottleneckRenderer
+from .path_planner import update_agent_waypoints, get_waypoint_direction, get_waypoint_distance
 
 
 class BottleneckInforMARLEnv(gym.Env):
@@ -123,6 +125,12 @@ class BottleneckInforMARLEnv(gym.Env):
             self.shared_gnn = GraphNeuralNetwork().to(self.device)
             self.gnn_optimizer = torch.optim.Adam(self.shared_gnn.parameters(), lr=0.003)
         
+        # 에이전트 waypoint 초기화
+        update_agent_waypoints(
+            self.agents, self.landmarks, self.corridor_width, self.corridor_height,
+            self.bottleneck_position, self.bottleneck_width
+        )
+        
         # 그래프 생성 (설정에 따라 GPU/CPU 선택)
         if self.use_gpu_graph:
             try:
@@ -165,6 +173,12 @@ class BottleneckInforMARLEnv(gym.Env):
                 self.include_obstacles_in_gnn
             )
         
+        # waypoint 업데이트 (매 스텝)
+        update_agent_waypoints(
+            self.agents, self.landmarks, self.corridor_width, self.corridor_height,
+            self.bottleneck_position, self.bottleneck_width
+        )
+        
         # 행동 선택 (배치 처리)
         if actions is None:
             actions, log_probs, values = self._get_batch_actions(graph_obs, training=True)
@@ -199,8 +213,8 @@ class BottleneckInforMARLEnv(gym.Env):
             )
         self.collision_count += collision_count
         
-        # 보상 계산
-        rewards = calculate_rewards(self.agents, self.landmarks)
+        # 보상 계산 (waypoint 기반)
+        rewards = calculate_waypoint_rewards(self.agents, self.landmarks)
         
         # 성공 카운트 업데이트
         for agent in self.agents:
@@ -334,11 +348,12 @@ class BottleneckInforMARLEnv(gym.Env):
         return actions, log_probs, values
     
     def _get_local_observation(self, agent_id: int) -> List[float]:
-        """에이전트의 로컬 관측 (논문의 o(i))"""
+        """에이전트의 로컬 관측 (waypoint 포함)"""
         agent = self.agents[agent_id]
         target = self.landmarks[agent.target_id]
         
-        return [
+        # 기본 관측
+        obs = [
             agent.x / self.sensing_radius,    # sensing_radius로 정규화된 위치
             agent.y / self.sensing_radius,
             agent.vx / agent.max_speed,       # 정규화된 속도
@@ -346,6 +361,18 @@ class BottleneckInforMARLEnv(gym.Env):
             (target.x - agent.x) / self.sensing_radius,  # 상대 목표 위치
             (target.y - agent.y) / self.sensing_radius
         ]
+        
+        # waypoint 정보 추가
+        waypoint_direction = get_waypoint_direction(agent)
+        waypoint_distance = get_waypoint_distance(agent)
+        
+        obs.extend([
+            waypoint_direction[0],  # waypoint 방향 x
+            waypoint_direction[1],  # waypoint 방향 y  
+            waypoint_distance / self.sensing_radius  # 정규화된 waypoint 거리
+        ])
+        
+        return obs
     
     def _is_done(self) -> bool:
         """종료 조건"""
