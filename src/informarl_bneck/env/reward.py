@@ -23,7 +23,7 @@ def calculate_rewards(agents: List[Agent2D], landmarks: List[Landmark2D]) -> Lis
             continue
         
         # 1. 거리 기반 기본 보상 (음수로 시작해서 가까워질수록 덜 나쁨)
-        reward -= distance * 0.1
+        reward -= distance * 0.5
         
         # 2. 목표 방향 이동 보상 (가장 중요!)
         target_direction = np.array([target.x - agent.x, target.y - agent.y])
@@ -67,10 +67,10 @@ def calculate_rewards(agents: List[Agent2D], landmarks: List[Landmark2D]) -> Lis
             if position_variance < 0.1:  # 거의 같은 자리
                 reward -= 2.0  # 정체 페널티
         
-        # 5. 충돌 페널티 - 충돌 시 큰 마이너스 보상
+        # 5. 충돌 페널티 - 충돌 시 마이너스 보상
         collision_penalty = getattr(agent, 'collision_penalty_timer', 0)
         if collision_penalty > 0:
-            reward -= 5.0  # 충돌 시 큰 페널티
+            reward -= 2.0  # 충돌 시 적당한 페널티
         
         # 6. 시간 페널티 (너무 오래 걸리면)
         reward -= 0.01  # 매 스텝마다 작은 시간 페널티

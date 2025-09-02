@@ -30,6 +30,7 @@ def update_positions(agents: List[Agent2D], obstacles: List[Obstacle2D],
                     bottleneck_position: float, bottleneck_width: float) -> int:
     """위치 업데이트 - 하드 경계 제약 적용"""
     dt = 0.1
+    collision_count = 0
     
     for agent in agents:
         new_x = agent.x + agent.vx * dt

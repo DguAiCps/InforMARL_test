@@ -27,7 +27,7 @@ class InforMARLAgent:
         self.optimizer = torch.optim.Adam(
             list(self.actor.parameters()) + 
             list(self.critic.parameters()), 
-            lr=0.003
+            lr=0.0005
         )
         
         # 경험 버퍼
@@ -127,7 +127,7 @@ class InforMARLAgent:
             entropy_loss = -entropy.mean()
             
             # Total loss
-            total_loss = policy_loss + 0.5 * value_loss + 0.01 * entropy_loss
+            total_loss = policy_loss + 0.5 * value_loss + 0.2 * entropy_loss
             
             # 역전파 - Actor, Critic 업데이트
             self.optimizer.zero_grad()
