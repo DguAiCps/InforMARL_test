@@ -1,0 +1,9 @@
+# Performance optimization configuration
+performance:
+  # Parallel processing
+  use_parallel: false
+  num_workers: 4
+  
+  # 하드코딩된 값들을 YAML로 이동
+  steps_per_worker: 25     # 워커별 수집 스텝 수
+  clear_memory_interval: 20  # GPU 메모리 정리 주기

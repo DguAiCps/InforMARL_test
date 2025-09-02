@@ -9,7 +9,7 @@ gnn:
   use_attention: true
 
 actor:
-  obs_dim: 6
+  obs_dim: 9  # waypoint 포함한 실제 차원
   agg_dim: 64
   action_dim: 4
   hidden_dim: 64

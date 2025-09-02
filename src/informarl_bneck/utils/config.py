@@ -31,6 +31,16 @@ def load_all_configs(config_dir: str = "configs") -> Dict[str, Any]:
     if os.path.exists(train_path):
         configs['train'] = load_config(train_path)
     
+    # Load performance config
+    performance_path = os.path.join(config_dir, "performance.yaml")
+    if os.path.exists(performance_path):
+        configs['performance'] = load_config(performance_path)
+    
+    # Load GPU config
+    gpu_path = os.path.join(config_dir, "gpu.yaml")
+    if os.path.exists(gpu_path):
+        configs['gpu'] = load_config(gpu_path)
+    
     return configs
 
 

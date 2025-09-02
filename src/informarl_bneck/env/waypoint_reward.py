@@ -54,10 +54,10 @@ def calculate_waypoint_rewards(agents: List[Agent2D], landmarks: List[Landmark2D
             if waypoint_distance < 1.0:  # waypoint에 충분히 가까우면
                 reward += 10.0
         
-        # 4. 충돌 페널티 (크게!)
+        # 4. 충돌 페널티 (양보 학습을 위해 적절한 강도)
         collision_penalty = getattr(agent, 'collision_penalty_timer', 0)
         if collision_penalty > 0:
-            reward -= 50.0  # 큰 페널티로 양보 학습 유도
+            reward -= 35.0  # 양보 행동 학습을 위한 적절한 페널티
         
         # 5. 정지 페널티 (작게)
         agent_velocity = np.array([agent.vx, agent.vy])
@@ -171,9 +171,9 @@ def calculate_waypoint_rewards_gpu(agents: List[Agent2D], landmarks: List[Landma
     waypoint_close = waypoint_distances < 1.0
     rewards[torch.where(active_mask)[0][waypoint_close]] += 10.0
     
-    # 4. 충돌 페널티 (-50점)
+    # 4. 충돌 페널티 (-35점)
     collision_mask = collision_penalties > 0
-    rewards[collision_mask] -= 50.0
+    rewards[collision_mask] -= 35.0
     
     # 5. 정지 페널티 (-1점)
     all_velocity_magnitudes = torch.norm(agent_velocities, dim=1)

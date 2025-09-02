@@ -1,30 +1,26 @@
 # Training configuration
 training:
-  num_episodes: 5000
-  learning_rate: 0.001  # 기존 0.03에서 낮춤
-  batch_size: 32
-  update_frequency: 50  # 매 10스텝마다 업데이트
+  num_episodes: 5  # 테스트용
+  learning_rate: 0.001
+  batch_size: 96
+  ppo_epochs: 2
   
-  # PPO parameters
-  ppo_epochs: 4
+  # 하드코딩된 값들을 YAML로 이동
+  update_frequency: 25  # 실제 사용 값
+  
+  # PPO parameters (하드코딩에서 이동)
   clip_epsilon: 0.2
   
-  # GAE parameters
+  # GAE parameters (하드코딩에서 이동)
   gamma: 0.99
   lambda: 0.95
   
-  # Loss weights
+  # Loss weights (하드코딩에서 이동)
   value_loss_coef: 0.5
   entropy_coef: 0.01
   
-  # Gradient clipping
+  # Gradient clipping (하드코딩에서 이동)
   max_grad_norm: 0.5
   
-  # Memory
-  memory_size: 10000
-  
-  # Evaluation
-  eval_frequency: 10  # 매 10 에피소드마다 로그
-  
-  # Seed for reproducibility
-  seed: 42
+  # Evaluation (하드코딩에서 이동)
+  eval_frequency: 5  # 실제 사용 값

@@ -33,6 +33,7 @@ class BottleneckInforMARLEnv(gym.Env):
                  sensing_radius: float = 3.0,
                  max_timesteps: int = 300,
                  config: dict = None,  # 🔥 YAML 설정을 받을 수 있게
+                 train_config: dict = None,  # 🚀 train.yaml 설정
                  gpu_id: int = None,   # 🚀 서버 GPU ID 지정
                  force_cpu: bool = False):  # CPU 강제 사용
         
@@ -41,6 +42,10 @@ class BottleneckInforMARLEnv(gym.Env):
         # 🚀 GPU 환경 설정
         setup_gpu_environment()
         self.device = get_device(gpu_id=gpu_id, force_cpu=force_cpu)
+        
+        # 설정 저장
+        self.config = config
+        self.train_config = train_config or {}
         
         # 🔥 YAML 설정이 있으면 우선 적용
         if config is not None:
@@ -91,6 +96,65 @@ class BottleneckInforMARLEnv(gym.Env):
         # 렌더링
         self.renderer = BottleneckRenderer()
         
+        # 공유 네트워크 초기화
+        self._initialize_shared_networks()
+        
+    def _initialize_shared_networks(self):
+        """공유 네트워크 초기화 (항상 수행)"""
+        # GNN 초기화
+        if self.shared_gnn is None:
+            gnn_config = {}
+            if hasattr(self, 'config') and self.config and 'model' in self.config and 'gnn' in self.config['model']:
+                gnn_config = self.config['model']['gnn']
+            
+            self.shared_gnn = GraphNeuralNetwork(
+                input_dim=gnn_config.get('input_dim', 6),
+                hidden_dim=gnn_config.get('hidden_dim', 64),
+                num_layers=gnn_config.get('num_layers', 1),
+                num_embeddings=gnn_config.get('num_embeddings', 4),
+                embedding_size=gnn_config.get('embedding_size', 8),
+                edge_dim=gnn_config.get('edge_dim', 1),
+                use_attention=gnn_config.get('use_attention', True)
+            ).to(self.device)
+            
+            learning_rate = 0.003
+            if hasattr(self, 'train_config') and self.train_config and 'training' in self.train_config:
+                learning_rate = self.train_config['training'].get('learning_rate', 0.003)
+            
+            self.gnn_optimizer = torch.optim.Adam(self.shared_gnn.parameters(), lr=learning_rate)
+        
+        # Actor/Critic 초기화
+        if not hasattr(self, 'shared_actor') or self.shared_actor is None:
+            from ..models.policy import Actor, Critic
+            
+            actor_config = {}
+            critic_config = {}
+            if self.config and 'model' in self.config:
+                model_cfg = self.config['model']
+                actor_config = model_cfg.get('actor', {})
+                critic_config = model_cfg.get('critic', {})
+            
+            self.shared_actor = Actor(
+                obs_dim=actor_config.get('obs_dim', 9),
+                agg_dim=actor_config.get('agg_dim', 64),
+                action_dim=actor_config.get('action_dim', 4),
+                hidden_dim=actor_config.get('hidden_dim', 64)
+            ).to(self.device)
+            
+            self.shared_critic = Critic(
+                agg_dim=critic_config.get('agg_dim', 64),
+                hidden_dim=critic_config.get('hidden_dim', 64)
+            ).to(self.device)
+            
+            learning_rate = 0.003
+            if hasattr(self, 'train_config') and self.train_config and 'training' in self.train_config:
+                learning_rate = self.train_config['training'].get('learning_rate', 0.003)
+            
+            self.shared_policy_optimizer = torch.optim.Adam(
+                list(self.shared_actor.parameters()) + list(self.shared_critic.parameters()), 
+                lr=learning_rate
+            )
+
     def reset(self) -> List[Data]:
         """환경 리셋"""
         self.timestep = 0
@@ -120,20 +184,8 @@ class BottleneckInforMARLEnv(gym.Env):
             informarl_agent = InforMARLAgent(agent_id=i, device=self.device)
             self.informarl_agents.append(informarl_agent)
         
-        # 공유 GNN 초기화 (GPU 사용)
-        if self.shared_gnn is None:
-            self.shared_gnn = GraphNeuralNetwork().to(self.device)
-            self.gnn_optimizer = torch.optim.Adam(self.shared_gnn.parameters(), lr=0.003)
-        
-        # 🚀 공유 Actor/Critic 초기화 (진짜 배치 처리용)
-        from ..models.policy import Actor, Critic
-        if not hasattr(self, 'shared_actor'):
-            self.shared_actor = Actor(obs_dim=9, action_dim=4).to(self.device)  # waypoint 포함 obs_dim
-            self.shared_critic = Critic().to(self.device)
-            self.shared_policy_optimizer = torch.optim.Adam(
-                list(self.shared_actor.parameters()) + list(self.shared_critic.parameters()), 
-                lr=0.003
-            )
+        # 공유 네트워크 초기화 수행
+        self._initialize_shared_networks()
         
         # 에이전트 waypoint 초기화
         update_agent_waypoints(
@@ -349,10 +401,18 @@ class BottleneckInforMARLEnv(gym.Env):
         if len(all_experiences) < 32:  # 전체 경험이 너무 적으면 스킵
             return
         
-        # 🚀 배치 샘플링
+        # 🚀 배치 샘플링 (train.yaml 설정 사용)
         import random
-        batch_size = min(64, len(all_experiences))  # 더 큰 배치 사이즈
+        
+        # train.yaml에서 batch_size 사용
+        default_batch_size = 64
+        if hasattr(self, 'train_config') and 'training' in self.train_config:
+            default_batch_size = self.train_config['training'].get('batch_size', 64)
+        
+        batch_size = min(default_batch_size, len(all_experiences))
         batch = random.sample(all_experiences, batch_size)
+        
+        print(f"  배치 학습: {batch_size}개 경험 사용 (전체 {len(all_experiences)}개 중)")
         
         # 배치 데이터 준비
         device = self.device
@@ -367,8 +427,12 @@ class BottleneckInforMARLEnv(gym.Env):
         advantages = self._compute_gae(rewards, values).to(device)
         returns = (advantages + values).to(device)
         
-        # 🚀 PPO 업데이트 (더 적은 에폭으로 속도 향상)
-        for _ in range(2):  # 4→2로 줄임
+        # 🚀 PPO 업데이트 (train.yaml에서 ppo_epochs 사용)
+        default_ppo_epochs = 3
+        if hasattr(self, 'train_config') and 'training' in self.train_config:
+            default_ppo_epochs = self.train_config['training'].get('ppo_epochs', 3)
+        
+        for epoch in range(default_ppo_epochs):
             # 공유 GNN으로 그래프 데이터 처리
             from torch_geometric.data import Batch
             batch_graphs = Batch.from_data_list(graph_data_list).to(device)
@@ -408,12 +472,23 @@ class BottleneckInforMARLEnv(gym.Env):
             new_log_probs = dist.log_prob(actions)
             entropy = dist.entropy()
             
+            # train.yaml에서 PPO 파라미터 사용
+            clip_eps = 0.2  # 기본값
+            value_coef = 0.5  # 기본값
+            entropy_coef = 0.01  # 기본값
+            
+            if hasattr(self, 'train_config') and 'training' in self.train_config:
+                training = self.train_config['training']
+                clip_eps = training.get('clip_epsilon', 0.2)
+                value_coef = training.get('value_loss_coef', 0.5)
+                entropy_coef = training.get('entropy_coef', 0.01)
+            
             # PPO ratio
             ratio = torch.exp(new_log_probs - old_log_probs)
             
             # Policy loss (clipped)
             surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1-0.2, 1+0.2) * advantages
+            surr2 = torch.clamp(ratio, 1-clip_eps, 1+clip_eps) * advantages
             policy_loss = -torch.min(surr1, surr2).mean()
             
             # Value loss
@@ -423,18 +498,33 @@ class BottleneckInforMARLEnv(gym.Env):
             entropy_loss = -entropy.mean()
             
             # Total loss
-            total_loss = policy_loss + 0.5 * value_loss + 0.01 * entropy_loss
+            total_loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
             
-            # 🚀 공유 네트워크 업데이트
+            # 🚀 공유 네트워크 업데이트 (train.yaml에서 max_grad_norm 사용)
+            max_grad_norm = 0.5  # 기본값
+            if hasattr(self, 'train_config') and 'training' in self.train_config:
+                max_grad_norm = self.train_config['training'].get('max_grad_norm', 0.5)
+            
             self.shared_policy_optimizer.zero_grad()
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(
                 list(self.shared_actor.parameters()) + list(self.shared_critic.parameters()), 
-                0.5
+                max_grad_norm
             )
             self.shared_policy_optimizer.step()
     
-    def _compute_gae(self, rewards, values, gamma=0.99, lam=0.95):
+    def _compute_gae(self, rewards, values, gamma=None, lam=None):
+        """train.yaml에서 GAE 파라미터 사용"""
+        # train.yaml에서 값 가져오기
+        if gamma is None:
+            gamma = 0.99  # 기본값
+            if hasattr(self, 'train_config') and 'training' in self.train_config:
+                gamma = self.train_config['training'].get('gamma', 0.99)
+        
+        if lam is None:
+            lam = 0.95  # 기본값
+            if hasattr(self, 'train_config') and 'training' in self.train_config:
+                lam = self.train_config['training'].get('lambda', 0.95)
         """Generalized Advantage Estimation"""
         advantages = torch.zeros_like(rewards)
         gae = 0

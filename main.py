@@ -13,12 +13,12 @@ from src.informarl_bneck.utils.config import get_env_params, load_all_configs
 
 def main():
     """메인 실행 함수"""
-    # 🔥 YAML 파일에서 설정 읽기
+    # YAML 파일에서 설정 읽기
     try:
         env_params = get_env_params("configs")
         configs = load_all_configs("configs")
         
-        # YAML에서 읽은 값들
+        # YAML에서 읽은 값들  
         num_agents = env_params['num_agents']
         num_episodes = configs.get('train', {}).get('training', {}).get('num_episodes', 100)
         
@@ -54,13 +54,59 @@ def main():
         else:
             print("사용법: python main.py [demo|test]")
     else:
-        # 일반 학습 실행 (GPU 설정 포함)
+        # 일반 학습 실행 (GPU 설정 + 병렬 처리 포함)
+        # performance.yaml 설정 추출
+        perf_config = configs.get('performance', {}).get('performance', {})
+        use_parallel = perf_config.get('use_parallel', True)
+        num_workers = perf_config.get('num_workers', 4)
+        
+        print(f"\n성능 설정:")
+        print(f"   - 병렬 처리: {use_parallel}")
+        if use_parallel:
+            print(f"   - 워커 수: {num_workers}")
+            print(f"   - 워커별 스텝: {perf_config.get('steps_per_worker', 25)}")
+        print(f"   - 메모리 정리: {perf_config.get('clear_memory_interval', 20)}에피소드마다")
+        
+        # train.yaml 설정 추출 및 표시
+        train_config = configs.get('train', {})
+        if train_config:
+            print(f"\n훈련 설정:")
+            training = train_config.get('training', {})
+            if training:
+                print(f"   - 에피소드: {training.get('num_episodes', 100)}")
+                print(f"   - 배치 크기: {training.get('batch_size', 64)}")
+                print(f"   - PPO 에폭: {training.get('ppo_epochs', 3)}")
+                print(f"   - 학습률: {training.get('learning_rate', 0.003)}")
+                print(f"   - 업데이트 빈도: {training.get('update_frequency', 25)}스텝마다")
+                print(f"   - 평가 빈도: {training.get('eval_frequency', 5)}에피소드마다")
+                print(f"   - GAE 감마: {training.get('gamma', 0.99)}")
+                print(f"   - GAE 람다: {training.get('lambda', 0.95)}")
+        
+        # model.yaml 설정 추출 및 표시
+        model_config = configs.get('model', {})
+        if model_config:
+            print(f"\n모델 설정:")
+            gnn = model_config.get('gnn', {})
+            if gnn:
+                print(f"   - GNN 히든: {gnn.get('hidden_dim', 64)}")
+                print(f"   - GNN 레이어: {gnn.get('num_layers', 1)}")
+                print(f"   - GNN 임베딩: {gnn.get('num_embeddings', 4)}개")
+            actor = model_config.get('actor', {})
+            critic = model_config.get('critic', {})
+            if actor:
+                print(f"   - Actor 히든: {actor.get('hidden_dim', 64)}")
+            if critic:
+                print(f"   - Critic 히든: {critic.get('hidden_dim', 64)}")
+        
         results, env = run_informarl_experiment(
             num_episodes=num_episodes, 
             num_agents=num_agents, 
-            config=env_params,
+            config={**env_params, 'model': model_config},  # env + model 설정 전달
+            train_config=train_config,  # train.yaml 전달
             gpu_id=gpu_id,
-            force_cpu=force_cpu
+            force_cpu=force_cpu,
+            use_parallel=use_parallel,
+            num_workers=num_workers
         )
         
         # 학습 후 애니메이션 보기
